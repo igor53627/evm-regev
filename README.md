@@ -12,7 +12,7 @@ moduli, no pairings, no modexp), and the scheme is plausibly post-quantum.
 |--------|---------|
 | `LibRegev` | Homomorphic add / scalar-mul, packed inner product, decrypt, decode, partial-decryption combine |
 | `RegevParameters` | Default parameter profile (TALLY-32) |
-| `RegevTestUtils` | Key generation, noise sampling, encrypt/decrypt, k-of-n share split (test/dev only) |
+| `RegevTestUtils` | Key generation, noise sampling, encrypt/decrypt, additive k-of-k share split (test/dev only) |
 | `examples/HiddenScore.sol` | Encrypted score accumulator — single trusted opener, per-player keys |
 | `examples/SealedTally.sol` | Encrypted aggregate tally — real on-chain k-of-k committee (commit-reveal) |
 

@@ -85,7 +85,6 @@ contract SealedTally {
 
     error NotIssuer();
     error NotMember();
-    error NotIssuerOrMember();
     error InvalidB();
     error SeedReused();
     error CapReached();
@@ -132,9 +131,13 @@ contract SealedTally {
     }
 
     /// @notice Freezes the accumulator/seed snapshot and opens the commit phase.
-    /// @dev Gated to issuer or any member. After this, contribute() reverts (F5).
+    /// @dev Issuer-only: the sole contributor signals "done contributing". Letting a
+    ///      member start the reveal would let it freeze early (after one contribution)
+    ///      and finalize a silently-incomplete tally. If the issuer never starts the
+    ///      reveal, that is the same liveness case as the issuer declining to open.
+    ///      After this, contribute() reverts (F5).
     function startReveal() external {
-        if (msg.sender != issuer && memberIndex1[msg.sender] == 0) revert NotIssuerOrMember();
+        if (msg.sender != issuer) revert NotIssuer();
         if (tally.phase != uint8(Phase.Open)) revert WrongPhase();
         if (tally.contribCount == 0) revert NoContributions(); // F4
 

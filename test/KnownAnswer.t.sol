@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {LibRegev} from "../src/LibRegev.sol";
 import {RegevParameters} from "../src/RegevParameters.sol";
 import {RegevTestUtils} from "../src/RegevTestUtils.sol";
 

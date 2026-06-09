@@ -120,13 +120,35 @@ contract SealedTallyTest is Test {
             tally.contribute(seeds[i], encB(ms[i], seeds[i]));
         }
         tally.startReveal();
-        // Issuer cannot submit a member's partial.
+        // (1) Attribution: issuer cannot impersonate a member to inject a partial.
         vm.expectRevert(SealedTally.NotMember.selector);
         tally.commitPartial(bytes32(uint256(1)));
-        // Nor finalize without members.
+        // (2) No shortcut: finalize needs phase Revealing, reached only once all k members
+        //     have committed -> the issuer cannot unilaterally produce ANY result.
         vm.expectRevert(SealedTally.WrongPhase.selector);
         tally.finalize();
         vm.stopPrank();
+
+        // (3) Even after the honest committee commits, the issuer still cannot reveal on a
+        //     member's behalf, and the honest finalize yields the TRUE sum (150), not an
+        //     issuer-chosen value -> the issuer has no lever over the committee result.
+        uint256[] memory parts = memberPartials(seeds);
+        bytes32[] memory commits = buildCommits(parts);
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            tally.commitPartial(commits[i]);
+        }
+        vm.prank(issuer);
+        vm.expectRevert(SealedTally.NotMember.selector);
+        tally.revealPartial(parts[0], salt(0));
+
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            tally.revealPartial(parts[i], salt(i));
+        }
+        tally.finalize();
+        (,,, uint16 result) = tally.tally();
+        assertEq(result, 150, "issuer cannot deviate the committee result");
     }
 
     // ── F2: last submitter cannot bias ────────────────────────────────────────
@@ -243,8 +265,13 @@ contract SealedTallyTest is Test {
         bytes32 sd = keccak256("c0");
         vm.prank(issuer);
         tally.contribute(sd, encB(1, sd));
+        // Neither an outsider nor a committee member can freeze the snapshot early:
+        // only the issuer (sole contributor) signals "done contributing".
         vm.prank(observer);
-        vm.expectRevert(SealedTally.NotIssuerOrMember.selector);
+        vm.expectRevert(SealedTally.NotIssuer.selector);
+        tally.startReveal();
+        vm.prank(members[0]);
+        vm.expectRevert(SealedTally.NotIssuer.selector);
         tally.startReveal();
     }
 }

@@ -84,49 +84,46 @@ contract HiddenScoreTest is Test {
 
     // ── F1: per-player key isolation + regression on the old shared-key attack ──
 
-    function test_perPlayerKeyIsolation() public {
-        uint256[] memory sA = derivePlayerSecret(playerA);
+    /// F1 property: per-player keys give KEY ISOLATION -- compromising one player's key
+    /// reveals nothing about another's hidden score. This is the structural replacement
+    /// for the old shared-key design (one key for all players, recoverable after ~1536
+    /// reveals). We credit two players under their own keys, reveal A honestly, then show
+    /// that an attacker holding A's FULL key still cannot decode B's on-chain accumulator
+    /// -- with a positive control proving B's ciphertext is itself valid.
+    function test_keyIsolation_oneKeyDoesNotLeakAnother() public {
+        bytes32 sa0 = keccak256("isoA");
+        bytes32 sb0 = keccak256("isoB");
+        vm.startPrank(issuer);
+        game.credit(playerA, sa0, encB(playerA, 100, sa0));
+        game.credit(playerB, sb0, encB(playerB, 200, sb0));
+        vm.stopPrank();
+
+        bytes32[] memory aSeeds = new bytes32[](1);
+        aSeeds[0] = sa0;
+        bytes32[] memory bSeeds = new bytes32[](1);
+        bSeeds[0] = sb0;
+
+        // A is revealed honestly under its own key.
+        vm.prank(opener);
+        game.reveal(playerA, openerPartial(playerA, aSeeds), digestOf(aSeeds));
+        (,, uint16 scoreA,) = game.players(playerA);
+        assertEq(scoreA, 100, "A reveals correctly");
+
+        (uint32 bAccB,,,) = game.players(playerB);
+
+        // Positive control: B's accumulator IS a valid ciphertext -- it decodes to 200
+        // under B's own key. So the negative result below is isolation, not a dud ct.
         uint256[] memory sB = derivePlayerSecret(playerB);
+        uint256 rightInner = LibRegev.innerProduct32(aggA(bSeeds), sB, WORDS);
+        uint256 rightPhase = LibRegev.decrypt32(uint256(bAccB), rightInner);
+        assertEq(LibRegev.decodeMessage(rightPhase, RegevParameters.DELTA_SHIFT), 200, "B decodes under sB");
 
-        // Keys are independent: at least one word differs.
-        bool differs = false;
-        for (uint256 j = 0; j < WORDS; j++) {
-            if (sA[j] != sB[j]) {
-                differs = true;
-                break;
-            }
-        }
-        assertTrue(differs, "per-player keys must be independent");
-
-        bytes32[] memory seeds = new bytes32[](1);
-        seeds[0] = keccak256("iso");
-        // The equation an attacker collects from A's reveal does NOT hold for B's key.
-        uint256 partWithA = LibRegev.innerProduct32(aggA(seeds), sA, WORDS);
-        uint256 partWithB = LibRegev.innerProduct32(aggA(seeds), sB, WORDS);
-        assertTrue(partWithA != partWithB, "a_agg sees the two keys differently");
-    }
-
-    /// Regression: the original break (one shared key, ~1536 reveals -> recover s) cannot
-    /// be mounted, because each player's reveal constrains a DIFFERENT independent key.
-    function test_oldSharedKeyRecoveryFails() public {
-        bytes32[] memory seedsA = new bytes32[](1);
-        seedsA[0] = keccak256("rA");
-        bytes32[] memory seedsB = new bytes32[](1);
-        seedsB[0] = keccak256("rB");
-
+        // Negative: an attacker holding A's full key produces a DIFFERENT phase for B's
+        // accumulator (<a_aggB, sA> != <a_aggB, sB>), so it cannot reproduce B's decode.
+        // Compromising A therefore leaks nothing about B's hidden score.
         uint256[] memory sA = derivePlayerSecret(playerA);
-        uint256[] memory sB = derivePlayerSecret(playerB);
-
-        // Attacker collects (a_aggA, eqA) from A's reveal and (a_aggB, eqB) from B's reveal.
-        uint256 eqA = LibRegev.innerProduct32(aggA(seedsA), sA, WORDS);
-        uint256 eqB = LibRegev.innerProduct32(aggA(seedsB), sB, WORDS);
-
-        // Under the OLD shared-key assumption the attacker would treat both as equations in
-        // ONE unknown s. They are not: eqB is an equation in sB, and evaluating B's row on
-        // A's key (what a shared-key solver assumes) gives a different value -> the system
-        // an attacker would build is in two independent unknowns, never solvable as one.
-        uint256 eqB_underSharedKey = LibRegev.innerProduct32(aggA(seedsB), sA, WORDS);
-        assertTrue(eqB != eqB_underSharedKey, "reveals do not compose against a shared key");
+        uint256 wrongInner = LibRegev.innerProduct32(aggA(bSeeds), sA, WORDS);
+        assertTrue(wrongInner != rightInner, "A's key yields a different phase for B");
     }
 
     // ── F6: seed uniqueness ───────────────────────────────────────────────────

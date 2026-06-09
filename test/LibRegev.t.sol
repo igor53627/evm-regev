@@ -206,8 +206,20 @@ contract LibRegevTest is Test {
         uint256[] memory partials = new uint256[](2);
         partials[0] = type(uint256).max;
         partials[1] = type(uint256).max;
+        // acc: 0 -> (2^256-1)&mask = 0xFFFFFFFF -> (0xFFFFFFFF + 2^256-1)&mask = 0xFFFFFFFE.
+        // diff = (0 - 0xFFFFFFFE) & mask = 2. Pin the exact reduced phase (not a vacuous
+        // "< 2^32", which masking makes true for every input); the point is it did NOT revert.
         uint256 diff = LibRegev.combinePartials(0, partials);
-        assertLt(diff, 1 << 32, "combinePartials did not reduce mod q");
+        assertEq(diff, 2, "combinePartials wrong reduced phase");
+    }
+
+    /// Finding [5]: the scalar bound in ctScalarMul must revert (a removed check would let
+    /// per-lane products overflow the 64-bit slot and bleed across lanes).
+    function test_ctScalarMul_rejectsOversizedScalar() public {
+        LibRegevHarness h = new LibRegevHarness();
+        uint256[] memory a = new uint256[](WORDS);
+        vm.expectRevert(bytes("scalar must be < 2^32"));
+        h.ctScalarMul(a, 0, 1 << 32, WORDS);
     }
 
     /// F7 regression: decodeMessage reverts on an out-of-range deltaShift instead of
@@ -232,5 +244,9 @@ contract LibRegevTest is Test {
 contract LibRegevHarness {
     function decodeMessage(uint256 diff, uint256 deltaShift) external pure returns (uint256) {
         return LibRegev.decodeMessage(diff, deltaShift);
+    }
+
+    function ctScalarMul(uint256[] memory a, uint256 b, uint256 w, uint256 numWords) external pure returns (uint256) {
+        return LibRegev.ctScalarMul(a, b, w, numWords);
     }
 }
