@@ -99,6 +99,42 @@ library RegevTestUtils {
         }
     }
 
+    /// @notice Splits s into k additive shares: sum_i s_i = s (lane-wise mod 2^32).
+    /// @dev TEST/DEV ONLY. Generalizes splitSecret to k terms: the first k-1 shares are
+    ///      fresh pseudorandom vectors, the last absorbs the lane-wise remainder.
+    /// @param s Packed secret vector
+    /// @param shareSeed Seed for the first k-1 shares
+    /// @param kShares Number of shares (>= 1)
+    function splitSecretK(uint256[] memory s, bytes32 shareSeed, uint256 kShares)
+        internal
+        pure
+        returns (uint256[][] memory shares)
+    {
+        require(kShares >= 1, "kShares must be >= 1");
+        uint256 numWords = s.length;
+        shares = new uint256[][](kShares);
+
+        // First k-1 shares: independent pseudorandom vectors.
+        for (uint256 i = 0; i + 1 < kShares; i++) {
+            shares[i] = expandSecret(keccak256(abi.encode(shareSeed, i)), numWords);
+        }
+
+        // Last share = s - sum(first k-1) lane-wise mod 2^32.
+        uint256[] memory last = new uint256[](numWords);
+        for (uint256 j = 0; j < numWords; j++) {
+            uint256 wLast = 0;
+            for (uint256 lane = 0; lane < 8; lane++) {
+                uint256 acc = (s[j] >> (lane * 32)) & Q_MASK;
+                for (uint256 i = 0; i + 1 < kShares; i++) {
+                    acc = ((1 << 32) + acc - ((shares[i][j] >> (lane * 32)) & Q_MASK)) & Q_MASK;
+                }
+                wLast |= acc << (lane * 32);
+            }
+            last[j] = wLast;
+        }
+        shares[kShares - 1] = last;
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     //  Bit utilities
     // ──────────────────────────────────────────────────────────────────────

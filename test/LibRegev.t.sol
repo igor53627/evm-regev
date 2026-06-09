@@ -139,7 +139,8 @@ contract LibRegevTest is Test {
         uint256 ip = LibRegev.innerProduct32(a, s, WORDS);
         uint256 used = g0 - gasleft();
         emit log_named_uint("innerProduct32 (192 words, n=1536) gas", used);
-        assertLt(ip, 1 << 32);
+        // Real assertion (not the vacuous `< 2^32`): match an independent lane reference.
+        assertEq(ip, refInnerProduct32(a, s), "innerProduct32 mismatch vs reference");
     }
 
     function test_gas_ctAdd() public {
@@ -150,5 +151,86 @@ contract LibRegevTest is Test {
         uint256 used = g0 - gasleft();
         emit log_named_uint("ctAdd (192 words, n=1536) gas", used);
         assertEq(accB, 123);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    //  Independent references + regression tests for the review findings
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Lane-by-lane reference inner product (independent of the assembly path).
+    function refInnerProduct32(uint256[] memory a, uint256[] memory s) internal pure returns (uint256 acc) {
+        for (uint256 i = 0; i < WORDS; i++) {
+            for (uint256 lane = 0; lane < 8; lane++) {
+                uint256 av = (a[i] >> (lane * 32)) & Q_MASK;
+                uint256 sv = (s[i] >> (lane * 32)) & Q_MASK;
+                acc += av * sv;
+            }
+        }
+        acc &= Q_MASK;
+    }
+
+    /// F10 regression: the fused-assembly ctAdd must equal a lane reference over random words.
+    function testFuzz_ctAdd_equalsLaneReference(uint256 seedX, uint256 seedY) public pure {
+        uint256[] memory accA = new uint256[](WORDS);
+        uint256[] memory a = new uint256[](WORDS);
+        uint256[] memory expected = new uint256[](WORDS);
+        for (uint256 i = 0; i < WORDS; i++) {
+            uint256 x = uint256(keccak256(abi.encode(seedX, i)));
+            uint256 y = uint256(keccak256(abi.encode(seedY, i)));
+            accA[i] = x;
+            a[i] = y;
+            uint256 w = 0;
+            for (uint256 lane = 0; lane < 8; lane++) {
+                uint256 sum = (((x >> (lane * 32)) & Q_MASK) + ((y >> (lane * 32)) & Q_MASK)) & Q_MASK;
+                w |= sum << (lane * 32);
+            }
+            expected[i] = w;
+        }
+        LibRegev.ctAdd(accA, 0, a, 0, WORDS);
+        for (uint256 i = 0; i < WORDS; i++) {
+            assertEq(accA[i], expected[i], "ctAdd lane mismatch");
+        }
+    }
+
+    /// F8 regression: ctAdd / combinePartials reduce mod 2^32 instead of reverting on
+    /// inputs near 2^256 (Solidity-0.8 checked-add would have panicked).
+    function test_f8_ctAdd_reducesInsteadOfReverting() public pure {
+        uint256[] memory accA = new uint256[](WORDS);
+        uint256[] memory a = new uint256[](WORDS);
+        uint256 newB = LibRegev.ctAdd(accA, 1, a, type(uint256).max, WORDS);
+        // 1 + (2^256 - 1) = 2^256 = 0 (mod 2^256), masked to 0; the point is it did NOT revert.
+        assertEq(newB, 0, "ctAdd b did not wrap mod 2^32");
+    }
+
+    function test_f8_combinePartials_reducesInsteadOfReverting() public pure {
+        uint256[] memory partials = new uint256[](2);
+        partials[0] = type(uint256).max;
+        partials[1] = type(uint256).max;
+        uint256 diff = LibRegev.combinePartials(0, partials);
+        assertLt(diff, 1 << 32, "combinePartials did not reduce mod q");
+    }
+
+    /// F7 regression: decodeMessage reverts on an out-of-range deltaShift instead of
+    /// silently returning 0. Routed through an external harness so expectRevert sees a
+    /// call at a lower depth (the library function is internal).
+    function test_f7_decodeMessage_rejectsBadShift() public {
+        LibRegevHarness h = new LibRegevHarness();
+        vm.expectRevert(bytes("deltaShift out of range"));
+        h.decodeMessage(123456, 48);
+        vm.expectRevert(bytes("deltaShift out of range"));
+        h.decodeMessage(123456, 0);
+    }
+
+    function test_f7_decodeMessage_acceptsValidShift() public pure {
+        // Delta*7 with small noise decodes to 7 at shift=16.
+        uint256 diff = (uint256(7) << SHIFT) + 5;
+        assertEq(LibRegev.decodeMessage(diff, SHIFT), 7);
+    }
+}
+
+/// External harness so expectRevert can observe reverts from internal library functions.
+contract LibRegevHarness {
+    function decodeMessage(uint256 diff, uint256 deltaShift) external pure returns (uint256) {
+        return LibRegev.decodeMessage(diff, deltaShift);
     }
 }

@@ -12,16 +12,17 @@ moduli, no pairings, no modexp), and the scheme is plausibly post-quantum.
 |--------|---------|
 | `LibRegev` | Homomorphic add / scalar-mul, packed inner product, decrypt, decode, partial-decryption combine |
 | `RegevParameters` | Default parameter profile (TALLY-32) |
-| `RegevTestUtils` | Key generation, noise sampling, encrypt/decrypt (test/dev only) |
-| `examples/HiddenScore.sol` | Encrypted score accumulator (issuer model, seed-derived a-vectors) |
+| `RegevTestUtils` | Key generation, noise sampling, encrypt/decrypt, k-of-n share split (test/dev only) |
+| `examples/HiddenScore.sol` | Encrypted score accumulator — single trusted opener, per-player keys |
+| `examples/SealedTally.sol` | Encrypted aggregate tally — real on-chain k-of-k committee (commit-reveal) |
 
 ## The pattern: aggregate-reveal
 
 Many parties contribute encrypted values; the contract accumulates them
 homomorphically; **only the aggregate is ever decrypted**. Compared to
-commit-reveal: one transaction per participant, no reveal phase, no
-"reveal-or-be-slashed" liveness problem, and individual values are never
-published.
+commit-reveal of plaintexts: one transaction per participant, no plaintext
+reveal phase, no "reveal-or-be-slashed" liveness problem, and individual values
+are never published.
 
 Target applications:
 
@@ -44,10 +45,45 @@ ct = (a, b),   b = <a, s> + e + Delta * m   (mod q)
 Addition of ciphertexts adds the underlying messages (mod `p`). Decryption
 rounds the phase `b - <a, s>` to the nearest multiple of `Delta = q/p`.
 
-Because decryption is **linear in `s`**, threshold opening is nearly free: give
+Because decryption is **linear in `s`**, threshold opening is cheap: give
 committee members additive shares `s_1 + ... + s_k = s`; each posts the scalar
 `<a_agg, s_i>`; the contract combines them with `LibRegev.combinePartials` and
-no party ever reconstructs `s`.
+no party ever reconstructs `s`. **But summing caller-supplied partials safely
+requires per-member attribution and commit-reveal on-chain** — see
+`examples/SealedTally.sol`; do not just accept a partials array in one call (the
+supplier could choose the phase and forge the result).
+
+## The two examples
+
+The aggregate-reveal pattern hides values, but **revealing a value publishes an
+exact linear equation in the key** (`<a_agg, s>` is exactly recoverable once the
+score and accumulator are public). Recovering an `n = 1536`-dimensional key needs
+≥ 1536 such equations, so the design must guarantee each key is opened few times.
+The two examples take the two honest routes:
+
+### `HiddenScore` — single trusted opener, per-player keys
+
+Each player has an **independent** key `s_player = expandSecret(keccak256(DOMAIN,
+masterSeed, player, address(this)))`. Revealing a player publishes ≤ 1–2 equations
+about *that player's* key only; equations never accumulate against a common
+unknown, and the player is **retired on reveal** (one open per key). So no key is
+ever within ~1534 equations of recovery — the fix is structural, needs no noise
+flooding, and needs no parameter change. The opener is a single trusted party
+(it knows `s_player`, so trusting it to open honestly adds no new assumption).
+**No committee, no threshold** — for that, use `SealedTally`.
+
+### `SealedTally` — real on-chain k-of-k committee
+
+The per-instance key is additively shared across `k` members. To open, **each
+member submits its own partial on-chain** (`msg.sender`-attributed), via a
+**commit-reveal where all commitments lock before any reveal**, bound to a frozen
+snapshot of the accumulator. This closes the forgery surface a single
+partials-array reveal would open: the issuer cannot supply a member's partial,
+no single party controls the sum, and the last revealer cannot see others'
+values to bias the result. A malicious member can still corrupt a tally (caught
+as a failed/abandoned reveal), but cannot forge a *targeted* result; `k`-of-`k`
+has no Byzantine fault tolerance (one absent member stalls finalize, like a
+multisig).
 
 ## Default parameters (TALLY-32)
 
@@ -68,35 +104,59 @@ Estimates use the simplified GSA heuristic; verify with the
 [lattice estimator](https://github.com/malb/lattice-estimator) before
 production use.
 
-## Gas benchmarks (Foundry)
+## Gas benchmarks (Foundry, optimizer on)
 
 | Operation | Parameters | Gas |
 |-----------|-----------|-----|
-| `ctAdd` (memory) | 192 words, n=1536 | ~64K |
-| `innerProduct32` | 192 words, n=1536 | ~108K |
-| `HiddenScore.credit()` | seed-derived a, 2 storage words | ~55K |
-| `addPacked32` (per word) | 8 lanes | ~36 |
+| `ctAdd` (memory) | 192 words, n=1536 | ~28K |
+| `innerProduct32` | 192 words, n=1536 | ~86K |
+| `HiddenScore.credit()` | first / subsequent | ~74K / ~58K |
+| `HiddenScore.reveal()` | single partial | ~32K |
+| `SealedTally.finalize()` | k=3 | ~41K |
+
+`credit()`/`contribute()` pay one cold `usedSeed` SSTORE (~20K, F6 seed
+uniqueness) plus a `seedDigest` running-hash SSTORE (F5 snapshot binding); these
+guards are the cost of the integrity properties and are why a credit is dearer
+than a bare accumulator add. Numbers are with the solc optimizer enabled
+(`foundry.toml`); disabling it inflates them materially.
 
 ## Trust model and honest caveats
 
 Read this before building on the library:
 
-1. **Ciphertext validity is not verifiable on-chain.** A malicious contributor
-   can encrypt `Enc(10^6)` instead of `Enc(1)` and skew the aggregate. Options:
-   a trusted/signing issuer (games, oracles — free), ZK range proofs for lattice
-   ciphertexts (heavy, future work), or economically bounded contributions.
-   Deploy permissionless-contributor designs only with one of these.
-2. **Openers are trusted for correctness.** A wrong partial decryption decodes
-   to a wrong aggregate. ZK proofs of correct partial decryption are future
-   work; until then use a committee you would also trust as a multisig.
-3. **One key per instance.** Each reveal publishes one linear equation in each
-   share; a long-lived key degrades over many reveals. Use fresh keys, or add
-   flooding noise to partials and budget for it.
-4. **Native ETH amounts cannot be hidden** — transaction values are public.
-   The scheme is for abstract quantities: votes, scores, order sizes,
-   allocations.
-5. **Secrets must never touch the chain.** Encryption and partial decryption
-   happen off-chain; the contract only adds, combines, and decodes.
+1. **The issuer is fully trusted.** It knows every key (HiddenScore) / contributes
+   all ciphertexts (SealedTally), so within the off-chain per-increment bound it can
+   encrypt `Enc(anything)`, decline to reveal, or post an honest-looking partial for a
+   fabricated value. The `DecodeOutOfRange` range checks prove only
+   partial-vs-accumulator/in-range consistency; they do **not** prove credited
+   increments were honest. Inherent to the issuer model; removing it needs ZK validity
+   proofs (Roadmap).
+2. **Per-increment magnitude is not enforced on-chain.** `MAX_INCREMENT` is documented,
+   not cryptographically enforced (encryption is off-chain). The `MAX_CREDITS` count cap
+   prevents only *accidental* mod-`p` wrap, not a malicious issuer over-crediting.
+3. **Committee correctness (SealedTally).** Commit-reveal stops a *targeted* forged
+   result and any single party reconstructing `s`, but a malicious member can still
+   corrupt the decode (caught as a failed/abandoned reveal, or a wrong-but-in-range
+   value). `k`-of-`k` has no Byzantine fault tolerance; robust correctness needs ZK
+   partial-decryption proofs (Roadmap).
+4. **Per-key open count is load-bearing.** Safety rests on each key being opened
+   ≈ once (HiddenScore retires a player on reveal; SealedTally finalizes once). Reusing
+   the same `masterSeed` for the same player across deployments composes equations
+   (still ≪ 1536, but discouraged); the contract cannot prevent off-chain key reuse.
+5. **No flooding noise.** TALLY-32 (`Delta/2 = 2^15`) has no headroom for flooding; the
+   design needs none because safety is structural (per-key open-count bound), not
+   noise-based.
+6. **Native ETH amounts cannot be hidden** — transaction values are public. The scheme
+   is for abstract quantities: votes, scores, order sizes, allocations.
+7. **Metadata leaks.** Seeds, `b` values, counts, and timing are public; only the
+   aggregate value is hidden until reveal. Seeds live in event logs — reconstruction
+   depends on log availability.
+8. **Secrets must never touch the chain.** Encryption and partial decryption happen
+   off-chain; the contract only adds, combines, and decodes. `test/KnownAnswer.t.sol`
+   pins the derivation (`a = PRG(ctSeed)`, `s = expandSecret`, `e = sampleNoise`) as a
+   normative reference for off-chain reimplementations.
+9. **No recovery after finalize.** `revealed`/`Finalized` is irreversible; the F4/F5
+   pre-commit checks make a wrong freeze far less likely but do not undo one.
 
 ## Core API
 
@@ -109,13 +169,14 @@ accB = LibRegev.ctAdd(accA, accB, a, b, numWords);
 // Weighted contribution: (a, b) -> Enc(w * m)
 newB = LibRegev.ctScalarMul(a, b, w, numWords);
 
-// Decryption (opener side)
+// Single-opener decryption
 uint256 ip = LibRegev.innerProduct32(a, s, numWords);
-uint256 m = LibRegev.decodeMessage(LibRegev.decrypt32(b, ip), DELTA_SHIFT);
+uint256 score = LibRegev.decodeMessage(LibRegev.decrypt32(b, ip), DELTA_SHIFT);
 
-// Threshold opening from additive-share partials
+// Threshold opening from additive-share partials (attribute + commit-reveal these
+// on-chain per member; see SealedTally)
 uint256 diff = LibRegev.combinePartials(b, partials);
-uint256 m = LibRegev.decodeMessage(diff, DELTA_SHIFT);
+uint256 tally = LibRegev.decodeMessage(diff, DELTA_SHIFT);
 ```
 
 ## Build and test
@@ -140,7 +201,9 @@ python3 tools/estimate_lwe.py
 - **Shamir t-of-n threshold** (requires a prime-modulus profile; additive n-of-n
   shares are supported today)
 - **ZK validity proofs** for ciphertexts and partial decryptions
-- **Flooding-noise helpers** for multi-reveal key reuse
+- **Upstream a 32-bit inner product into
+  [evm-lwe-math](https://github.com/igor53627/evm-lwe-math)** so `innerProduct32`
+  / `decrypt32` share the audited 16/12-bit implementations instead of forking them
 
 ## Related projects
 
