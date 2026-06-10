@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {LibLWE} from "evm-lwe-math/src/LibLWE.sol";
+
 /// @title LibRegev
 /// @notice Additively homomorphic Regev (LWE) encryption primitives for the EVM.
 /// @dev A ciphertext is a pair (a, b) where a is a packed vector of n coefficients
@@ -21,10 +23,11 @@ pragma solidity ^0.8.20;
 ///      aggregate is ever decrypted -- either by a designated opener or by a
 ///      committee posting partial inner products (see combinePartials).
 ///
-///      Cross-repo note: decrypt32 and innerProduct32 are the 32-bit-lane analogues
-///      of evm-lwe-math LibLWE.decryptPow2 / innerProduct12 (which cover 16- and
-///      12-bit lanes). Keep the three in step; a shared 32-bit variant upstream in
-///      evm-lwe-math is tracked as follow-up.
+///      Cross-repo note: innerProduct32 and decrypt32 delegate to the audited
+///      evm-lwe-math LibLWE (innerProduct32 / decryptPow2), so the 32-bit inner
+///      product and phase subtraction live in one place rather than a fork. The
+///      Regev-specific homomorphic ops (ctAdd, ctScalarMul, combinePartials,
+///      decodeMessage) and the SWAR word helpers stay here.
 library LibRegev {
     // 32-bit lanes at even positions (bits 0..31, 64..95, 128..159, 192..223)
     uint256 private constant EVEN_LANES = 0x00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF00000000FFFFFFFF;
@@ -130,72 +133,19 @@ library LibRegev {
     // ──────────────────────────────────────────────────────────────────────
 
     /// @notice Computes <a, s> mod 2^32 for 32-bit packed vectors.
-    /// @dev Pointer-increment addressing; the 8th lane is already < 2^32 after seven
-    ///      shifts, so its mask is omitted.
+    /// @dev Delegates to the audited evm-lwe-math LibLWE.innerProduct32 (same 8x32-bit
+    ///      LSB-first layout); kept here as a thin alias so callers use one Regev API.
     /// @param a Packed vector (8 elements per word, LSB-first)
     /// @param s Packed secret vector (same layout)
     /// @param numWords Number of packed words (n = numWords * 8)
-    function innerProduct32(uint256[] memory a, uint256[] memory s, uint256 numWords)
-        internal
-        pure
-        returns (uint256 result)
-    {
-        require(a.length >= numWords && s.length >= numWords, "numWords exceeds array length");
-        assembly {
-            let aPtr := add(a, 32)
-            let sPtr := add(s, 32)
-            let acc := 0
-            let mask := Q_MASK
-
-            // Each product < 2^64; n = numWords*8 terms keep acc far below 2^256.
-            for { let i := 0 } lt(i, numWords) { i := add(i, 1) } {
-                let wa := mload(aPtr)
-                let ws := mload(sPtr)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                acc := add(acc, mul(and(wa, mask), and(ws, mask)))
-                wa := shr(32, wa)
-                ws := shr(32, ws)
-
-                // 8th lane: wa, ws already < 2^32 after seven shifts
-                acc := add(acc, mul(wa, ws))
-
-                aPtr := add(aPtr, 32)
-                sPtr := add(sPtr, 32)
-            }
-
-            result := and(acc, mask)
-        }
+    function innerProduct32(uint256[] memory a, uint256[] memory s, uint256 numWords) internal pure returns (uint256) {
+        return LibLWE.innerProduct32(a, s, numWords);
     }
 
     /// @notice Computes the noisy phase (b - innerProd) mod 2^32.
-    function decrypt32(uint256 b, uint256 innerProd) internal pure returns (uint256 diff) {
-        assembly {
-            diff := and(sub(b, innerProd), Q_MASK)
-        }
+    /// @dev Delegates to LibLWE.decryptPow2 with the 32-bit mask.
+    function decrypt32(uint256 b, uint256 innerProd) internal pure returns (uint256) {
+        return LibLWE.decryptPow2(b, innerProd, Q_MASK);
     }
 
     /// @notice Rounds the noisy phase to the nearest multiple of Delta and returns m.

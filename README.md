@@ -8,6 +8,10 @@ The cheapest-by-gas additively homomorphic encryption available on vanilla EVM:
 ciphertext addition is bitmasked 32-bit lane arithmetic (no `MULMOD` over big
 moduli, no pairings, no modexp), and the scheme is plausibly post-quantum.
 
+The 32-bit inner product and phase subtraction (`innerProduct32`, `decrypt32`)
+are delegated to the audited [evm-lwe-math](https://github.com/igor53627/evm-lwe-math)
+library (added as a submodule); the Regev-specific homomorphic ops live here.
+
 | Module | Purpose |
 |--------|---------|
 | `LibRegev` | Homomorphic add / scalar-mul, packed inner product, decrypt, decode, partial-decryption combine |
@@ -201,9 +205,6 @@ python3 tools/estimate_lwe.py
 - **Shamir t-of-n threshold** (requires a prime-modulus profile; additive n-of-n
   shares are supported today)
 - **ZK validity proofs** for ciphertexts and partial decryptions
-- **Upstream a 32-bit inner product into
-  [evm-lwe-math](https://github.com/igor53627/evm-lwe-math)** so `innerProduct32`
-  / `decrypt32` share the audited 16/12-bit implementations instead of forking them
 
 ## Related projects
 
