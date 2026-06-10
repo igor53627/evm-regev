@@ -113,7 +113,7 @@ production use.
 | Operation | Parameters | Gas |
 |-----------|-----------|-----|
 | `ctAdd` (memory) | 192 words, n=1536 | ~28K |
-| `innerProduct32` | 192 words, n=1536 | ~86K |
+| `innerProduct32` | 192 words, n=1536 | ~70K |
 | `HiddenScore.credit()` | first / subsequent | ~74K / ~58K |
 | `HiddenScore.reveal()` | single partial | ~32K |
 | `SealedTally.finalize()` | k=3 | ~41K |
