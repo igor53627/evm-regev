@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-06-11 05:07'
+updated_date: '2026-06-11 06:01'
 labels:
   - security
   - audit
@@ -31,4 +32,5 @@ This is the documented k-of-k liveness limit, but the residual-risk text only fr
 <!-- AC:BEGIN -->
 - [ ] #1 Add a documented timeout/recovery path returning to Open (allowing re-contribution / re-commit), OR explicitly document that recovery == redeploy + replay contributions
 - [ ] #2 Residual-risk text in SealedTally NatSpec + README states the unrecoverability of a stalled instance
+- [ ] #3 Recovery AC covers BOTH liveness directions: an absent/lost-key member stalling finalize AND an absent issuer (startReveal is issuer-only) bricking the Open->Committing transition
 <!-- AC:END -->

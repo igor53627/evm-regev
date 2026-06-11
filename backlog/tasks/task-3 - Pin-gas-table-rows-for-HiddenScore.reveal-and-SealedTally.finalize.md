@@ -1,10 +1,10 @@
 ---
 id: TASK-3
 title: Pin gas-table rows for HiddenScore.reveal() and SealedTally.finalize()
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-06-11 05:07'
-updated_date: '2026-06-11 05:46'
+updated_date: '2026-06-11 06:01'
 labels:
   - audit
   - roborev-confirmed

@@ -32,19 +32,19 @@ OTHER FINDINGS:
 - Low: SealedTally allows k=1 (require n>=1); a single member then holds all of s and can forge, contradicting "no single trusted opener".
 - Low: HiddenScore per-player key derivation omits block.chainid; same-address (CREATE2) cross-chain deploy + reused masterSeed -> shared key, equations compose across chains.
 - Low/Info: constructors do not reject zero addresses; a zero-address SealedTally member permanently bricks the instance (independently echoed by roborev: no abort/timeout/reset; single faulty member bricks instance).
-- Info (doc accuracy): HiddenScore "<=2 equations per key" understates the true bound (reverted-reveal calldata is public and partials are exact -> up to MAX_CREDITS=255 independent equations; margin to 1536 still holds, ~1281). combinePartials natspec dangles "+flooding noise" that TALLY-32 (delta/2=2^15) cannot support. issuer/opener split in HiddenScore is operational, not a trust reduction (both hold full key material).
+- Info (doc accuracy): HiddenScore "<=2 equations per key" understates the true bound (reverted-reveal calldata is public and partials are exact -> up to MAX_CREDITS=255 independent equations; margin to 1536 still holds, ~1280 = 1536-256, i.e. 255 credit-equations + the 1 reveal-equation). combinePartials natspec dangles "+flooding noise" that TALLY-32 (delta/2=2^15) cannot support. issuer/opener split in HiddenScore is operational, not a trust reduction (both hold full key material).
 
 roborev jobs: 6995/6996/6997 (security, codex) = no issues (diff-scoped); 6998 (design, claude-code) = Pass with corroborating notes on KAT drift, liveness/griefing, and the loose "<=2" phrasing. Design Finding 1 (member can freeze early) is STALE — already fixed: current startReveal() is issuer-only.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 SealedTally constructor rejects issuer in _members and requires k>=2 (or explicitly documents k=1 == single trusted opener); regression test reproduces and then blocks the issuer-as-member forgery PoC (true=100 vs forged=65000)
+- [x] #1 SealedTally constructor rejects issuer in _members and requires k>=2 (or explicitly documents k=1 == single trusted opener), making the issuer-as-member forgery PoC (true=100 vs forged=65000) unconstructable; asserted by test_constructor_rejectsIssuerAsMember / test_constructor_rejectsSingleMemberCommittee
 - [x] #2 Both example constructors reject zero-address roles/members (HiddenScore issuer/opener; SealedTally members)
 - [x] #3 KnownAnswer.t.sol pins normative KAT vectors for the per-player key seed composition, the seedDigest keccak fold, and splitSecretK, closing the fail-open cross-implementation gap
 - [ ] #4 High-entropy (>=128-bit random) salt requirement for SealedTally commitments is documented and the example demonstrates a random (non-deterministic) salt
 - [x] #5 HiddenScore per-player key derivation includes block.chainid (spec + KAT vector)
-- [x] #6 Docs corrected: '<=2 equations' -> '<=MAX_CREDITS, margin >=1281'; combinePartials '+flooding noise' removed/marked unsupported at TALLY-32; HiddenScore issuer/opener split clarified as operational not trust-reducing
+- [x] #6 Docs corrected: '<=2 equations' -> '<=MAX_CREDITS, margin ~1280'; combinePartials '+flooding noise' removed/marked unsupported at TALLY-32; HiddenScore issuer/opener split clarified as operational not trust-reducing
 - [x] #7 Missing gas probes added for HiddenScore.reveal() and SealedTally.finalize() (README table rows currently unpinned)
 <!-- AC:END -->
 
