@@ -4,7 +4,7 @@ title: Address security audit findings in Regev examples & KAT spec
 status: Done
 assignee: []
 created_date: '2026-06-11 04:43'
-updated_date: '2026-06-11 09:20'
+updated_date: '2026-06-11 09:27'
 labels:
   - security
   - audit
@@ -51,7 +51,7 @@ roborev jobs: 6995/6996/6997 (security, codex) = no issues (diff-scoped); 6998 (
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-All ACs except #4 implemented; 48/48 tests green. AC#4: the >=128-bit CSPRNG salt requirement is DOCUMENTED (commitPartial natspec + test salt() helper), but the example intentionally keeps deterministic salts for reproducible KAT vectors, so AC#4 (literal 'example demonstrates a random salt') is left unchecked -- a random-salt demo is a deferred follow-up. roborev (post-commit) also caught a missing SealedTally _issuer zero-check, now fixed + tested.
+All 7 ACs delivered. AC#1-3/#5-7 in PR #1 (audit remediation); AC#4 in PR #3 via test_happyPath_randomSalt + test_predictableSalt_leaksPartialToBruteForce. See the final summary for the per-AC detail.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
