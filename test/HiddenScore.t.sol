@@ -31,7 +31,7 @@ contract HiddenScoreTest is Test {
 
     /// Per-player key: s_player = expandSecret(keccak256(DOMAIN, masterSeed, player, game)).
     function derivePlayerSecret(address player) internal view returns (uint256[] memory) {
-        bytes32 seed = keccak256(abi.encode(PLAYER_KEY_DOMAIN, MASTER_SEED, player, address(game)));
+        bytes32 seed = keccak256(abi.encode(PLAYER_KEY_DOMAIN, MASTER_SEED, player, block.chainid, address(game)));
         return RegevTestUtils.expandSecret(seed, WORDS);
     }
 
@@ -250,5 +250,18 @@ contract HiddenScoreTest is Test {
         uint256 g0 = gasleft();
         game.credit(playerA, s, b);
         emit log_named_uint("credit() gas (first, one-slot pack + usedSeed)", g0 - gasleft());
+    }
+
+    function test_reveal_gas() public {
+        bytes32[] memory seeds = new bytes32[](1);
+        seeds[0] = keccak256("g-reveal");
+        vm.prank(issuer);
+        game.credit(playerA, seeds[0], encB(playerA, 7, seeds[0]));
+        uint256 prt = openerPartial(playerA, seeds);
+        bytes32 dg = digestOf(seeds);
+        vm.prank(opener);
+        uint256 g0 = gasleft();
+        game.reveal(playerA, prt, dg);
+        emit log_named_uint("reveal() warm-exec gas (single partial; excl. 21k base + cold SLOADs)", g0 - gasleft());
     }
 }

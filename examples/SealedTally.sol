@@ -100,9 +100,17 @@ contract SealedTally {
         issuer = _issuer;
         instanceId = keccak256(abi.encode(address(this), block.chainid));
         uint256 n = _members.length;
-        require(n >= 1 && n <= 255, "k out of range");
+        // k-of-k committee with k >= 2: k == 1 would be a single member holding all of
+        // s (a single trusted opener that can forge), which this example explicitly is not.
+        require(n >= 2 && n <= 255, "k out of range");
         k = uint8(n);
         for (uint256 i = 0; i < n; i++) {
+            // The committee must be disjoint from the issuer. The issuer knows the full
+            // secret s, so an issuer that also held a share could unilaterally forge the
+            // finalized result (commit-reveal gives no protection -- the forging partial is
+            // precomputable from s + its own share). Enforced, not just assumed.
+            require(_members[i] != address(0), "zero member address");
+            require(_members[i] != _issuer, "issuer cannot be a member");
             members.push(_members[i]);
             require(memberIndex1[_members[i]] == 0, "duplicate member");
             memberIndex1[_members[i]] = uint8(i + 1);
@@ -150,6 +158,10 @@ contract SealedTally {
 
     /// @notice Member commits to its partial. Reveal opens only once all k have committed.
     /// @param commitment keccak256(abi.encode(instanceId, snapshotDigest, idx, partial, salt))
+    /// @dev SALT MUST be >= 128-bit uniformly random and kept secret until reveal. The
+    ///      committed `partial` is only ~32 bits, so the salt is the ONLY hiding entropy;
+    ///      a predictable/low-entropy salt lets another member brute-force the partial
+    ///      (~2^32 keccak) before reveal and defeat the no-adaptive-bias guarantee.
     function commitPartial(bytes32 commitment) external {
         uint8 idx = memberIndex1[msg.sender];
         if (idx == 0) revert NotMember();

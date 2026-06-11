@@ -11,7 +11,7 @@ import {RegevParameters} from "../src/RegevParameters.sol";
 /// score increments. Crucially, EACH PLAYER HAS AN INDEPENDENT KEY derived from the
 /// master seed:
 ///
-///     s_player = expandSecret(keccak256(PLAYER_KEY_DOMAIN, masterSeed, player, address(this)))
+///     s_player = expandSecret(keccak256(PLAYER_KEY_DOMAIN, masterSeed, player, block.chainid, address(this)))
 ///
 /// Each credit is a ciphertext (a, b) where the a-vector is derived from a public
 /// per-credit seed (a = PRG(ctSeed)) and never touches the chain -- only the 32-bit
@@ -29,10 +29,14 @@ import {RegevParameters} from "../src/RegevParameters.sol";
 /// SHARED key, one instance serving many players would accumulate one equation per
 /// reveal and, after ~1536 reveals, leak the key -- decrypting every unrevealed
 /// player. Per-player keys make the equations land against DIFFERENT independent
-/// unknowns: no key ever sees more than ~2 equations, so no key is ever within ~1534
-/// of recovery. A player is also retired on reveal (the `revealed` flag blocks all
-/// further credit/reveal), capping it at one reveal. This needs no noise flooding and
-/// no parameter change; safety is structural.
+/// unknowns. In the normal flow a key sees exactly ONE exact equation: a player is
+/// retired on first reveal (the `revealed` flag blocks all further credit/reveal). The
+/// public ciphertext scalars b_i are noisy LWE samples, NOT exact equations (LWE
+/// assumes a is public). Even under an adversarial credit/reveal race -- where a
+/// reverted reveal still leaks its exact partial in public calldata -- the exact
+/// equations per key are bounded by MAX_CREDITS (255), leaving a margin of
+/// >= 1536 - 256 ~ 1280 to recovery. This needs no noise flooding and no parameter
+/// change; safety is structural.
 ///
 /// TRUST MODEL (no committee, no threshold -- do not claim otherwise):
 /// The issuer is the sole crediter and the opener is the sole opener. The opener
@@ -40,8 +44,10 @@ import {RegevParameters} from "../src/RegevParameters.sol";
 /// to post the honest partial at reveal -- this is not a new assumption, since an
 /// issuer that knows s_player can already encrypt anything. The DecodeOutOfRange
 /// check below catches a class of wrong partials, NOT a dishonest opener and NOT
-/// dishonest increments. For real threshold opening (k-of-k, no single trusted
-/// party), see examples/SealedTally.sol.
+/// dishonest increments. The issuer/opener split is OPERATIONAL (which address may call
+/// which function), NOT a trust reduction: the opener holds the same key material as the
+/// issuer, so issuer != opener is not separation of duties. For real threshold opening
+/// (k-of-k, no single trusted party), see examples/SealedTally.sol.
 contract HiddenScore {
     uint256 private constant Q_MASK = RegevParameters.Q_MASK;
 
@@ -88,6 +94,8 @@ contract HiddenScore {
     error DecodeOutOfRange();
 
     constructor(address _issuer, address _opener, bytes32 _masterCommitment) {
+        // Zero issuer/opener would make credit()/reveal() permanently unreachable.
+        require(_issuer != address(0) && _opener != address(0), "zero role address");
         issuer = _issuer;
         opener = _opener;
         masterCommitment = _masterCommitment;

@@ -68,11 +68,14 @@ The two examples take the two honest routes:
 ### `HiddenScore` — single trusted opener, per-player keys
 
 Each player has an **independent** key `s_player = expandSecret(keccak256(DOMAIN,
-masterSeed, player, address(this)))`. Revealing a player publishes ≤ 1–2 equations
-about *that player's* key only; equations never accumulate against a common
-unknown, and the player is **retired on reveal** (one open per key). So no key is
-ever within ~1534 equations of recovery — the fix is structural, needs no noise
-flooding, and needs no parameter change. The opener is a single trusted party
+masterSeed, player, block.chainid, address(this)))`. Revealing a player publishes
+**one exact equation** in *that player's* key only (the public ciphertext scalars
+`b_i` are noisy LWE samples, not exact equations); equations never accumulate against
+a common unknown, and the player is **retired on reveal** (one open per key). Even
+under an adversarial credit/reveal race (reverted-reveal calldata leaks exact
+partials) the count per key is bounded by `MAX_CREDITS = 255`, leaving a margin of
+≥ 1536 − 256 ≈ 1280 to recovery — the fix is structural, needs no noise flooding, and
+needs no parameter change. The opener is a single trusted party
 (it knows `s_player`, so trusting it to open honestly adds no new assumption).
 **No committee, no threshold** — for that, use `SealedTally`.
 
@@ -115,8 +118,13 @@ production use.
 | `ctAdd` (memory) | 192 words, n=1536 | ~28K |
 | `innerProduct32` | 192 words, n=1536 | ~70K |
 | `HiddenScore.credit()` | first / subsequent | ~74K / ~58K |
-| `HiddenScore.reveal()` | single partial | ~32K |
-| `SealedTally.finalize()` | k=3 | ~41K |
+| `HiddenScore.reveal()` | single partial | ~32K † |
+| `SealedTally.finalize()` | k=3 | ~41K † |
+
+`ctAdd` / `innerProduct32` / `credit()` are pinned by gas tests (`test_gas_*`,
+`test_credit_gas`). † `reveal()` / `finalize()` are point-in-time full-transaction
+estimates (incl. 21k base + cold SLOADs), not test-pinned; the `test_reveal_gas` /
+`test_finalize_gas` probes log warm-execution gas as a drift signal.
 
 `credit()`/`contribute()` pay one cold `usedSeed` SSTORE (~20K, F6 seed
 uniqueness) plus a `seedDigest` running-hash SSTORE (F5 snapshot binding); these
@@ -144,9 +152,11 @@ Read this before building on the library:
    value). `k`-of-`k` has no Byzantine fault tolerance; robust correctness needs ZK
    partial-decryption proofs (Roadmap).
 4. **Per-key open count is load-bearing.** Safety rests on each key being opened
-   ≈ once (HiddenScore retires a player on reveal; SealedTally finalizes once). Reusing
-   the same `masterSeed` for the same player across deployments composes equations
-   (still ≪ 1536, but discouraged); the contract cannot prevent off-chain key reuse.
+   ≈ once (HiddenScore retires a player on reveal; SealedTally finalizes once). The
+   HiddenScore key binds `block.chainid` and `address(this)`, so the same `masterSeed`
+   and player yield *different* keys across chains/instances; only reusing one
+   `masterSeed` at a CREATE2-identical address on the *same* chain would compose
+   equations (still ≪ 1536, but the contract cannot prevent off-chain key reuse).
 5. **No flooding noise.** TALLY-32 (`Delta/2 = 2^15`) has no headroom for flooding; the
    design needs none because safety is structural (per-key open-count bound), not
    noise-based.
