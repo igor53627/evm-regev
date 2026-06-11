@@ -39,8 +39,11 @@ import {RegevParameters} from "../src/RegevParameters.sol";
 /// timelock) and a `revealTimeout` at deploy to enable emergencyAbort(). After the timeout
 /// elapses on a stalled opening (Committing/Revealing), governance can move the tally to a
 /// terminal Aborted state -- turning a silent permanent stall into an explicit, observable
-/// dead-end (then redeploy). It can only KILL a stalled opening, never produce a result, so
-/// it adds no forgery power. Pass governance = address(0) to keep the pure k-of-k model
+/// dead-end (then redeploy). A fully-revealed opening that decodes validly is FINALIZED (not
+/// aborted), so governance can never suppress a determined result; it can only finalize a
+/// determined result or kill a genuinely stalled/corrupted opening, never fabricate or
+/// suppress one, so it adds no forgery or bias power. Pass governance = address(0) to keep
+/// the pure k-of-k model
 /// (stall == redeploy-only). Because members are immutable, this is abort-and-redeploy, not
 /// in-place recovery.
 contract SealedTally {
@@ -237,15 +240,23 @@ contract SealedTally {
         if (tally.phase != uint8(Phase.Revealing)) revert WrongPhase();
         if (revealedCount != k) revert IncompletePartials(); // F4: all partials present
 
-        uint256[] memory partials = partialOf; // copy storage -> memory for the library call
-        uint256 diff = LibRegev.combinePartials(uint256(bAccSnapshot), partials); // SNAPSHOT, not live bAcc (F5)
-        uint256 m = LibRegev.decodeMessage(diff, RegevParameters.DELTA_SHIFT);
-        if (m > MAX_RESULT) revert DecodeOutOfRange(); // F4 sanity
+        (uint256 m, bool inRange) = _decodeResult();
+        if (!inRange) revert DecodeOutOfRange(); // F4 sanity
 
         tally.result = uint16(m);
         tally.phase = uint8(Phase.Finalized); // finalize ONLY on full success (F4)
 
         emit Finalized(uint16(m));
+    }
+
+    /// @dev Combines the k partials over the frozen snapshot and decodes the aggregate.
+    ///      `inRange` is false when the decode exceeds MAX_RESULT (a corrupted opening).
+    ///      Shared by finalize() and emergencyAbort() so the two never diverge.
+    function _decodeResult() internal view returns (uint256 m, bool inRange) {
+        uint256[] memory partials = partialOf; // copy storage -> memory for the library call
+        uint256 diff = LibRegev.combinePartials(uint256(bAccSnapshot), partials); // SNAPSHOT (F5)
+        m = LibRegev.decodeMessage(diff, RegevParameters.DELTA_SHIFT);
+        inRange = m <= MAX_RESULT;
     }
 
     /// @notice OPT-IN emergency exit: governance may abort a STALLED opening after the
@@ -261,6 +272,13 @@ contract SealedTally {
     ///      an abort (redeploy to retry), not an in-place recovery: a permanently-lost member
     ///      cannot be replaced here. The Open phase is intentionally NOT abortable -- the
     ///      issuer alone decides when to open, and a long contribution window is legitimate.
+    ///
+    ///      No outcome suppression: a FULLY-revealed opening (revealedCount == k) is not
+    ///      "stalled" -- its result is already determined. If it decodes in range, this
+    ///      FINALIZES it (records the honest result) instead of aborting, so governance can
+    ///      never wait, compute an unfavorable result, and abort it. Only a genuinely stuck
+    ///      opening aborts: incomplete (revealedCount < k) or fully-revealed-but-corrupted
+    ///      (decode out of range, where finalize() itself reverts).
     function emergencyAbort() external {
         if (governance == address(0)) revert EmergencyExitDisabled();
         if (msg.sender != governance) revert NotGovernance();
@@ -268,8 +286,19 @@ contract SealedTally {
         if (ph != uint8(Phase.Committing) && ph != uint8(Phase.Revealing)) revert WrongPhase();
         if (block.timestamp < uint256(revealStartedAt) + revealTimeout) revert TimeoutNotElapsed();
 
-        tally.phase = uint8(Phase.Aborted);
+        // A fully-revealed opening that decodes validly is finalizable, not stalled:
+        // finalize it rather than abort, so governance cannot suppress a determined result.
+        if (ph == uint8(Phase.Revealing) && revealedCount == k) {
+            (uint256 m, bool inRange) = _decodeResult();
+            if (inRange) {
+                tally.result = uint16(m);
+                tally.phase = uint8(Phase.Finalized);
+                emit Finalized(uint16(m));
+                return;
+            }
+        }
 
+        tally.phase = uint8(Phase.Aborted);
         emit Aborted(msg.sender);
     }
 

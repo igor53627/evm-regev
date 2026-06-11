@@ -96,8 +96,11 @@ multisig).
 revealTimeout)`. Pass a non-zero `governance` (a multisig / DAO / timelock) to enable
 `emergencyAbort()`: once `revealTimeout` elapses on a stalled opening, governance can move
 the tally to a terminal **Aborted** state — turning a silent permanent stall into an
-explicit, observable dead-end (then redeploy). It can only *kill* a stalled opening, never
-produce a result, so it adds no forgery power; and because members are immutable it is
+explicit, observable dead-end (then redeploy). To prevent outcome suppression, a
+*fully-revealed* opening that decodes validly is **finalized** (not aborted), so governance
+can never wait for a determined result and abort an unfavorable one — it can only finalize a
+determined result or kill a genuinely stalled/corrupted opening, never fabricate or suppress
+one, so it adds no forgery or bias power. Because members are immutable it is
 abort-and-redeploy, not in-place recovery. Pass `governance = address(0)` to keep the pure
 k-of-k model (stall ⇒ redeploy only). The Open phase is intentionally not abortable — the
 issuer alone decides when to open.

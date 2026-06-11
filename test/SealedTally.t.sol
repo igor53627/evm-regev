@@ -407,4 +407,38 @@ contract SealedTallyTest is Test {
         vm.expectRevert(SealedTally.WrongPhase.selector);
         g.emergencyAbort(); // cannot abort twice (terminal)
     }
+
+    /// No outcome suppression: if ALL k partials are revealed and the result decodes in
+    /// range, emergencyAbort() FINALIZES the honest result instead of aborting -- governance
+    /// cannot wait, compute an unfavorable-but-valid result, and abort it.
+    function test_emergencyAbort_finalizesFullyRevealed_noSuppression() public {
+        SealedTally g = new SealedTally(issuer, members, governance, ABORT_TIMEOUT);
+        bytes32[] memory seeds = new bytes32[](1);
+        seeds[0] = keccak256("gf0");
+        vm.startPrank(issuer);
+        g.contribute(seeds[0], encB(77, seeds[0]));
+        g.startReveal();
+        vm.stopPrank();
+
+        uint256[] memory parts = memberPartials(seeds);
+        bytes32 iid = g.instanceId();
+        bytes32 snap = g.snapshotDigest();
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            g.commitPartial(keccak256(abi.encode(iid, snap, uint8(i + 1), parts[i], salt(i))));
+        }
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            g.revealPartial(parts[i], salt(i));
+        }
+
+        // All revealed but finalize() not yet called; warp past the timeout, governance acts.
+        vm.warp(block.timestamp + ABORT_TIMEOUT);
+        vm.prank(governance);
+        g.emergencyAbort();
+
+        (,, uint8 phase, uint16 result) = g.tally();
+        assertEq(phase, uint8(3), "must be Finalized, not Aborted");
+        assertEq(result, 77, "the determined valid result must be recorded, not suppressed");
+    }
 }
