@@ -1,10 +1,10 @@
 ---
 id: TASK-1
 title: Address security audit findings in Regev examples & KAT spec
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-06-11 04:43'
-updated_date: '2026-06-11 05:50'
+updated_date: '2026-06-11 09:27'
 labels:
   - security
   - audit
@@ -42,7 +42,7 @@ roborev jobs: 6995/6996/6997 (security, codex) = no issues (diff-scoped); 6998 (
 - [x] #1 SealedTally constructor rejects issuer in _members and requires k>=2 (or explicitly documents k=1 == single trusted opener), making the issuer-as-member forgery PoC (true=100 vs forged=65000) unconstructable; asserted by test_constructor_rejectsIssuerAsMember / test_constructor_rejectsSingleMemberCommittee
 - [x] #2 Both example constructors reject zero-address roles/members (HiddenScore issuer/opener; SealedTally members)
 - [x] #3 KnownAnswer.t.sol pins normative KAT vectors for the per-player key seed composition, the seedDigest keccak fold, and splitSecretK, closing the fail-open cross-implementation gap
-- [ ] #4 High-entropy (>=128-bit random) salt requirement for SealedTally commitments is documented and the example demonstrates a random (non-deterministic) salt
+- [x] #4 High-entropy (>=128-bit random) salt requirement for SealedTally commitments is documented and the example demonstrates a random (non-deterministic) salt
 - [x] #5 HiddenScore per-player key derivation includes block.chainid (spec + KAT vector)
 - [x] #6 Docs corrected: '<=2 equations' -> '<=MAX_CREDITS, margin ~1280'; combinePartials '+flooding noise' removed/marked unsupported at TALLY-32; HiddenScore issuer/opener split clarified as operational not trust-reducing
 - [x] #7 Missing gas probes added for HiddenScore.reveal() and SealedTally.finalize() (README table rows currently unpinned)
@@ -51,5 +51,11 @@ roborev jobs: 6995/6996/6997 (security, codex) = no issues (diff-scoped); 6998 (
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-All ACs except #4 implemented; 48/48 tests green. AC#4: the >=128-bit CSPRNG salt requirement is DOCUMENTED (commitPartial natspec + test salt() helper), but the example intentionally keeps deterministic salts for reproducible KAT vectors, so AC#4 (literal 'example demonstrates a random salt') is left unchecked -- a random-salt demo is a deferred follow-up. roborev (post-commit) also caught a missing SealedTally _issuer zero-check, now fixed + tested.
+All 7 ACs delivered. AC#1-3/#5-7 in PR #1 (audit remediation); AC#4 in PR #3 via test_happyPath_randomSalt + test_predictableSalt_leaksPartialToBruteForce. See the final summary for the per-AC detail.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+All 7 ACs delivered across PR #1 (audit remediation) and this change (AC#4). AC#4: added test_happyPath_randomSalt (demonstrates the recommended fresh-CSPRNG-salt pattern end-to-end via vm.randomUint) and test_predictableSalt_leaksPartialToBruteForce (demonstrates the failure mode -- a predictable salt makes the ~32-bit committed partial a brute-force oracle; a random salt closes it). The >=128-bit CSPRNG requirement is documented in commitPartial natspec + the test salt() helper.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -486,4 +486,74 @@ contract SealedTallyTest is Test {
         (,, uint8 phase,) = g.tally();
         assertEq(phase, uint8(4), "corrupted fully-revealed opening should be Aborted");
     }
+
+    // ── Commit salt entropy (the recommended pattern, and why it matters) ───────
+
+    /// Recommended production pattern: each member blinds its commitment with a fresh
+    /// high-entropy (CSPRNG) salt. The tally finalizes correctly regardless of salt value;
+    /// salts only need to be UNPREDICTABLE and secret until reveal (see the negative test).
+    function test_happyPath_randomSalt() public {
+        (bytes32[] memory seeds, uint256[] memory ms) = twoContribs();
+        vm.startPrank(issuer);
+        for (uint256 i = 0; i < seeds.length; i++) {
+            tally.contribute(seeds[i], encB(ms[i], seeds[i]));
+        }
+        tally.startReveal();
+        vm.stopPrank();
+
+        uint256[] memory parts = memberPartials(seeds);
+        bytes32 iid = tally.instanceId();
+        bytes32 snap = tally.snapshotDigest();
+        bytes32[] memory salts = new bytes32[](K);
+        for (uint256 i = 0; i < K; i++) {
+            salts[i] = bytes32(vm.randomUint()); // fresh CSPRNG salt per member
+            vm.prank(members[i]);
+            tally.commitPartial(keccak256(abi.encode(iid, snap, uint8(i + 1), parts[i], salts[i])));
+        }
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            tally.revealPartial(parts[i], salts[i]);
+        }
+        tally.finalize();
+        (,,, uint16 result) = tally.tally();
+        assertEq(result, 150, "random salts finalize correctly (100 + 50)");
+    }
+
+    /// Why the salt MUST be high-entropy: the committed partial is only ~32 bits and every
+    /// other commitment input (instanceId, snapshotDigest, idx) is public, so a predictable
+    /// salt makes the commitment a brute-force oracle for the partial. An attacker enumerates
+    /// the 2^32 partial space (GPU-feasible in minutes) and confirms each guess against the
+    /// public commitment -- recovering another member's partial BEFORE reveal and defeating
+    /// the no-adaptive-bias guarantee. We demonstrate the oracle on a small window around the
+    /// true value (the real search is 2^32); a fresh random salt closes it.
+    function test_predictableSalt_leaksPartialToBruteForce() public {
+        bytes32 iid = keccak256("iid");
+        bytes32 snap = keccak256("snap");
+        uint8 idx = 1;
+        uint256 truePartial = 0xC0FFEE; // a member's secret 32-bit partial
+
+        // BAD: a public/deterministic salt. The attacker knows it.
+        bytes32 weakSalt = keccak256("predictable-salt");
+        bytes32 commitment = keccak256(abi.encode(iid, snap, idx, truePartial, weakSalt));
+
+        // Attacker brute-forces the partial (window stands in for the full 2^32 space).
+        uint256 recovered = type(uint256).max;
+        for (uint256 g = truePartial - 4; g <= truePartial + 4; g++) {
+            if (keccak256(abi.encode(iid, snap, idx, g, weakSalt)) == commitment) {
+                recovered = g;
+                break;
+            }
+        }
+        assertEq(recovered, truePartial, "predictable salt: the 32-bit partial is brute-forceable");
+
+        // GOOD: a fresh CSPRNG salt. The attacker can no longer enumerate (2^32 x 2^256), so
+        // the same search (it does not know the salt) recovers nothing.
+        bytes32 randomSalt = bytes32(vm.randomUint());
+        bytes32 hidden = keccak256(abi.encode(iid, snap, idx, truePartial, randomSalt));
+        bool found;
+        for (uint256 g = truePartial - 4; g <= truePartial + 4; g++) {
+            if (keccak256(abi.encode(iid, snap, idx, g, weakSalt)) == hidden) found = true;
+        }
+        assertFalse(found, "random salt: commitment does not leak the partial");
+    }
 }
