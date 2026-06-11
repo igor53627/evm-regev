@@ -403,6 +403,9 @@ contract SealedTallyTest is Test {
         vm.expectRevert(SealedTally.WrongPhase.selector);
         g.commitPartial(keccak256("late"));
 
+        vm.expectRevert(SealedTally.WrongPhase.selector);
+        g.finalize();
+
         vm.prank(governance);
         vm.expectRevert(SealedTally.WrongPhase.selector);
         g.emergencyAbort(); // cannot abort twice (terminal)
