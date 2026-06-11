@@ -66,8 +66,7 @@ contract KnownAnswerTest is Test {
     /// Pinned with literal chainid = 1 and fixed player/game addresses so the vector is
     /// environment-independent (the live contract substitutes block.chainid/address(this)).
     function test_kat_playerKeySeed() public pure {
-        bytes32 seed =
-            keccak256(abi.encode(KAT_PLAYER_KEY_DOMAIN, SEED, address(0xCAFE), uint256(1), address(0xABCD)));
+        bytes32 seed = keccak256(abi.encode(KAT_PLAYER_KEY_DOMAIN, SEED, address(0xCAFE), uint256(1), address(0xABCD)));
         assertEq(seed, 0xc201dea2c34280a6238382da5067f417da817e6036df11c094cacc9474cbfc4c);
     }
 
