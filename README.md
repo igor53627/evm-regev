@@ -1,7 +1,7 @@
 # evm-regev
 
 [![CI](https://github.com/igor53627/evm-regev/actions/workflows/test.yml/badge.svg)](https://github.com/igor53627/evm-regev/actions/workflows/test.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Solidity ^0.8.20](https://img.shields.io/badge/Solidity-%5E0.8.20-363636?logo=solidity)](https://soliditylang.org)
 [![Built with Foundry](https://img.shields.io/badge/Built%20with-Foundry-FFDB1C)](https://getfoundry.sh)
 
