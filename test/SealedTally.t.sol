@@ -302,6 +302,13 @@ contract SealedTallyTest is Test {
         new SealedTally(issuer, one);
     }
 
+    /// A zero issuer permanently bricks contribute()/startReveal() (no caller is
+    /// address(0)), leaving the instance stuck in Open.
+    function test_constructor_rejectsZeroIssuer() public {
+        vm.expectRevert(bytes("zero issuer address"));
+        new SealedTally(address(0), members);
+    }
+
     // ── Gas ───────────────────────────────────────────────────────────────────
 
     function test_finalize_gas() public {

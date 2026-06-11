@@ -97,6 +97,9 @@ contract SealedTally {
     error DecodeOutOfRange();
 
     constructor(address _issuer, address[] memory _members) {
+        // Zero issuer would permanently brick contribute()/startReveal() (no caller can
+        // be address(0)), leaving the instance stuck in Open forever.
+        require(_issuer != address(0), "zero issuer address");
         issuer = _issuer;
         instanceId = keccak256(abi.encode(address(this), block.chainid));
         uint256 n = _members.length;

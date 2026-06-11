@@ -4,7 +4,7 @@ title: Address security audit findings in Regev examples & KAT spec
 status: In Progress
 assignee: []
 created_date: '2026-06-11 04:43'
-updated_date: '2026-06-11 05:46'
+updated_date: '2026-06-11 05:50'
 labels:
   - security
   - audit
@@ -42,7 +42,7 @@ roborev jobs: 6995/6996/6997 (security, codex) = no issues (diff-scoped); 6998 (
 - [x] #1 SealedTally constructor rejects issuer in _members and requires k>=2 (or explicitly documents k=1 == single trusted opener); regression test reproduces and then blocks the issuer-as-member forgery PoC (true=100 vs forged=65000)
 - [x] #2 Both example constructors reject zero-address roles/members (HiddenScore issuer/opener; SealedTally members)
 - [x] #3 KnownAnswer.t.sol pins normative KAT vectors for the per-player key seed composition, the seedDigest keccak fold, and splitSecretK, closing the fail-open cross-implementation gap
-- [x] #4 High-entropy (>=128-bit random) salt requirement for SealedTally commitments is documented and the example demonstrates a random (non-deterministic) salt
+- [ ] #4 High-entropy (>=128-bit random) salt requirement for SealedTally commitments is documented and the example demonstrates a random (non-deterministic) salt
 - [x] #5 HiddenScore per-player key derivation includes block.chainid (spec + KAT vector)
 - [x] #6 Docs corrected: '<=2 equations' -> '<=MAX_CREDITS, margin >=1281'; combinePartials '+flooding noise' removed/marked unsupported at TALLY-32; HiddenScore issuer/opener split clarified as operational not trust-reducing
 - [x] #7 Missing gas probes added for HiddenScore.reveal() and SealedTally.finalize() (README table rows currently unpinned)
@@ -51,5 +51,5 @@ roborev jobs: 6995/6996/6997 (security, codex) = no issues (diff-scoped); 6998 (
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-All 7 ACs implemented; 47/47 tests green. Files: examples/SealedTally.sol, examples/HiddenScore.sol, src/LibRegev.sol, README.md, test/{SealedTally,HiddenScore,KnownAnswer}.t.sol. Nuances: AC#4 -- salt-entropy requirement is documented in commitPartial natspec + the test salt() helper, but the example KEEPS deterministic salts (with an explicit CSPRNG warning) so KAT vectors stay reproducible. AC#7 -- reveal()/finalize() README rows marked point-in-time (warm-exec gas ~4K != full-tx ~32K/41K); probes log warm-exec as a drift signal. Pending commit/PR.
+All ACs except #4 implemented; 48/48 tests green. AC#4: the >=128-bit CSPRNG salt requirement is DOCUMENTED (commitPartial natspec + test salt() helper), but the example intentionally keeps deterministic salts for reproducible KAT vectors, so AC#4 (literal 'example demonstrates a random salt') is left unchecked -- a random-salt demo is a deferred follow-up. roborev (post-commit) also caught a missing SealedTally _issuer zero-check, now fixed + tested.
 <!-- SECTION:NOTES:END -->
