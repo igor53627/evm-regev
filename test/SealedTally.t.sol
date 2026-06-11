@@ -54,6 +54,9 @@ contract SealedTallyTest is Test {
         }
     }
 
+    /// TEST-ONLY deterministic salts (for reproducible vectors). REAL deployments MUST
+    /// use a >= 128-bit CSPRNG salt kept secret until reveal: the committed partial is
+    /// only ~32 bits, so a predictable salt is brute-forceable (see commitPartial natspec).
     function salt(uint256 i) internal pure returns (bytes32) {
         return keccak256(abi.encode("salt", i));
     }
@@ -273,5 +276,61 @@ contract SealedTallyTest is Test {
         vm.prank(members[0]);
         vm.expectRevert(SealedTally.NotIssuer.selector);
         tally.startReveal();
+    }
+
+    // ── Forgery-surface hardening (issuer must be disjoint from the committee) ──
+
+    /// An issuer that is also a committee member knows the full secret s AND holds a
+    /// share, so it could forge an arbitrary finalized result (commit-reveal gives no
+    /// protection: the forging partial is precomputable from s). The constructor must
+    /// reject this configuration outright.
+    function test_constructor_rejectsIssuerAsMember() public {
+        address[] memory bad = new address[](3);
+        bad[0] = members[0];
+        bad[1] = issuer; // issuer also holds a committee share
+        bad[2] = members[2];
+        vm.expectRevert(bytes("issuer cannot be a member"));
+        new SealedTally(issuer, bad);
+    }
+
+    /// k == 1 is a single member holding all of s (a single trusted opener that can
+    /// forge), which contradicts the k-of-k "no single trusted opener" model.
+    function test_constructor_rejectsSingleMemberCommittee() public {
+        address[] memory one = new address[](1);
+        one[0] = members[0];
+        vm.expectRevert(bytes("k out of range"));
+        new SealedTally(issuer, one);
+    }
+
+    /// A zero issuer permanently bricks contribute()/startReveal() (no caller is
+    /// address(0)), leaving the instance stuck in Open.
+    function test_constructor_rejectsZeroIssuer() public {
+        vm.expectRevert(bytes("zero issuer address"));
+        new SealedTally(address(0), members);
+    }
+
+    // ── Gas ───────────────────────────────────────────────────────────────────
+
+    function test_finalize_gas() public {
+        (bytes32[] memory seeds, uint256[] memory ms) = twoContribs();
+        vm.startPrank(issuer);
+        for (uint256 i = 0; i < seeds.length; i++) {
+            tally.contribute(seeds[i], encB(ms[i], seeds[i]));
+        }
+        tally.startReveal();
+        vm.stopPrank();
+        uint256[] memory parts = memberPartials(seeds);
+        bytes32[] memory commits = buildCommits(parts);
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            tally.commitPartial(commits[i]);
+        }
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            tally.revealPartial(parts[i], salt(i));
+        }
+        uint256 g0 = gasleft();
+        tally.finalize();
+        emit log_named_uint("finalize() warm-exec gas (k=3; excl. 21k base + cold SLOADs)", g0 - gasleft());
     }
 }

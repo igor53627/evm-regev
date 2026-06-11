@@ -164,8 +164,10 @@ library LibRegev {
 
     /// @notice Combines additive-share partial decryptions: diff = b - sum(partials) mod q.
     /// @dev For a committee holding additive shares s_1 + ... + s_k = s, each member
-    ///      posts p_i = <a, s_i> (+ flooding noise) and the aggregate decrypts without
-    ///      ever reconstructing s. Flooding noise must stay within the decode margin.
+    ///      posts p_i = <a, s_i> and the aggregate decrypts without ever reconstructing
+    ///      s. (TALLY-32 has no decode-margin headroom for flooding noise, so partials
+    ///      are exact; threshold opening therefore provides forgery-resistance and
+    ///      no-single-party reconstruction, NOT information-theoretic hiding of shares.)
     ///
     ///      Security caveat for direct callers: summing caller-supplied partials in one
     ///      call lets whoever supplies the array choose the phase (and thus forge the
