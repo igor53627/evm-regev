@@ -3,10 +3,10 @@ id: TASK-2
 title: >-
   SealedTally: no abort/timeout/reset — one faulty member permanently bricks the
   instance
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-06-11 05:07'
-updated_date: '2026-06-11 06:01'
+updated_date: '2026-06-11 07:54'
 labels:
   - security
   - audit
@@ -30,7 +30,13 @@ This is the documented k-of-k liveness limit, but the residual-risk text only fr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Add a documented timeout/recovery path returning to Open (allowing re-contribution / re-commit), OR explicitly document that recovery == redeploy + replay contributions
-- [ ] #2 Residual-risk text in SealedTally NatSpec + README states the unrecoverability of a stalled instance
+- [x] #1 Add a documented timeout/recovery path returning to Open (allowing re-contribution / re-commit), OR explicitly document that recovery == redeploy + replay contributions
+- [x] #2 Residual-risk text in SealedTally NatSpec + README states the unrecoverability of a stalled instance
 - [ ] #3 Recovery AC covers BOTH liveness directions: an absent/lost-key member stalling finalize AND an absent issuer (startReveal is issuer-only) bricking the Open->Committing transition
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented opt-in emergency exit (commit on branch feat/sealedtally-emergency-exit). AC#1: timeout-gated emergencyAbort() -> terminal Aborted, enabled iff a governance address is set at deploy; else stall==redeploy (documented). AC#2: NatSpec + README state the stall/unrecoverability and the opt-in escape. AC#3 left UNCHECKED by design: only the post-startReveal opening stall (Committing/Revealing) is abortable; the issuer-absent-in-Open direction is intentionally NOT abortable (no committee work is stuck there, the issuer legitimately controls opening timing, and a single timeout would conflate the contribution window with the opening window). Chose ABORT over reset-to-Open because members are immutable -> a permanently-lost member cannot be replaced in-place, so reset cannot finalize; abort+redeploy is the honest recovery. 5 new tests; 55/55 pass.
+<!-- SECTION:NOTES:END -->
