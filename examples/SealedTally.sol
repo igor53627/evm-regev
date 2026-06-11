@@ -34,6 +34,15 @@ import {RegevParameters} from "../src/RegevParameters.sol";
 /// has no Byzantine fault tolerance: one dishonest member corrupts the tally and one
 /// absent member stalls finalize (liveness == multisig liveness). Robust correctness
 /// needs ZK partial-decryption proofs (Roadmap).
+///
+/// OPTIONAL EMERGENCY EXIT: pass a non-zero `governance` address (a multisig / DAO /
+/// timelock) and a `revealTimeout` at deploy to enable emergencyAbort(). After the timeout
+/// elapses on a stalled opening (Committing/Revealing), governance can move the tally to a
+/// terminal Aborted state -- turning a silent permanent stall into an explicit, observable
+/// dead-end (then redeploy). It can only KILL a stalled opening, never produce a result, so
+/// it adds no forgery power. Pass governance = address(0) to keep the pure k-of-k model
+/// (stall == redeploy-only). Because members are immutable, this is abort-and-redeploy, not
+/// in-place recovery.
 contract SealedTally {
     uint256 private constant Q_MASK = RegevParameters.Q_MASK;
 
@@ -45,12 +54,22 @@ contract SealedTally {
         Open,
         Committing,
         Revealing,
-        Finalized
+        Finalized,
+        Aborted // terminal: a stalled opening was emergency-aborted (no result)
     }
 
     address public immutable issuer; // sole contributor
     bytes32 public immutable instanceId; // binds commitments to this deployment
     uint8 public immutable k; // committee size (k-of-k)
+
+    /// @dev OPTIONAL emergency-exit authority (a multisig / DAO / timelock address). When
+    ///      set, governance may emergencyAbort() a stalled opening after revealTimeout. When
+    ///      zero, the emergency exit is DISABLED and a stalled tally is recoverable only by
+    ///      redeploying (the original honest k-of-k == multisig liveness model).
+    address public immutable governance;
+    /// @dev Seconds after startReveal() before governance may abort a stalled opening.
+    ///      Only meaningful when governance != address(0).
+    uint64 public immutable revealTimeout;
 
     address[] public members;
     mapping(address => uint8) public memberIndex1; // 1-based; 0 = not a member
@@ -67,6 +86,7 @@ contract SealedTally {
     bytes32 public seedDigest; // F5: running digest of contributed seeds
     bytes32 public snapshotDigest; // F5: seedDigest frozen at startReveal
     uint32 public bAccSnapshot; // F5: bAcc frozen at startReveal
+    uint64 public revealStartedAt; // block.timestamp of startReveal (emergency-exit clock)
     mapping(bytes32 => bool) public usedSeed; // F6
 
     // Per-member commit-reveal (parallel arrays, length k, index = memberIndex1 - 1)
@@ -82,6 +102,7 @@ contract SealedTally {
     event PartialCommitted(address indexed member);
     event PartialRevealed(address indexed member, uint256 memberPartial);
     event Finalized(uint16 result);
+    event Aborted(address indexed by);
 
     error NotIssuer();
     error NotMember();
@@ -95,11 +116,20 @@ contract SealedTally {
     error IncompletePartials();
     error NoContributions();
     error DecodeOutOfRange();
+    error NotGovernance();
+    error EmergencyExitDisabled();
+    error TimeoutNotElapsed();
 
-    constructor(address _issuer, address[] memory _members) {
+    constructor(address _issuer, address[] memory _members, address _governance, uint64 _revealTimeout) {
         // Zero issuer would permanently brick contribute()/startReveal() (no caller can
         // be address(0)), leaving the instance stuck in Open forever.
         require(_issuer != address(0), "zero issuer address");
+        // Emergency exit is opt-in: a non-zero governance enables emergencyAbort() after the
+        // timeout; a positive timeout is then required so governance cannot abort instantly.
+        // governance == address(0) => feature off (a stalled tally is recovered by redeploy).
+        require(_governance == address(0) || _revealTimeout > 0, "timeout required");
+        governance = _governance;
+        revealTimeout = _revealTimeout;
         issuer = _issuer;
         instanceId = keccak256(abi.encode(address(this), block.chainid));
         uint256 n = _members.length;
@@ -154,6 +184,7 @@ contract SealedTally {
 
         bAccSnapshot = tally.bAcc;
         snapshotDigest = seedDigest;
+        revealStartedAt = uint64(block.timestamp); // starts the emergency-exit clock
         tally.phase = uint8(Phase.Committing);
 
         emit RevealStarted(bAccSnapshot, snapshotDigest);
@@ -215,6 +246,31 @@ contract SealedTally {
         tally.phase = uint8(Phase.Finalized); // finalize ONLY on full success (F4)
 
         emit Finalized(uint16(m));
+    }
+
+    /// @notice OPT-IN emergency exit: governance may abort a STALLED opening after the
+    ///         timeout, moving the tally to the terminal Aborted state.
+    /// @dev k-of-k has no Byzantine fault tolerance: one absent / lost-key / self-bricked
+    ///      member stalls the commit-reveal forever, and without this the instance is
+    ///      silently stuck and indistinguishable from in-progress. This converts that into an
+    ///      explicit, observable dead-end so off-chain parties stop waiting and redeploy.
+    ///
+    ///      It NEVER produces a result, so it cannot forge or bias a tally -- the only power
+    ///      it grants is to KILL a stalled (Committing/Revealing) opening once revealTimeout
+    ///      has elapsed since startReveal. Because committee membership is immutable, this is
+    ///      an abort (redeploy to retry), not an in-place recovery: a permanently-lost member
+    ///      cannot be replaced here. The Open phase is intentionally NOT abortable -- the
+    ///      issuer alone decides when to open, and a long contribution window is legitimate.
+    function emergencyAbort() external {
+        if (governance == address(0)) revert EmergencyExitDisabled();
+        if (msg.sender != governance) revert NotGovernance();
+        uint8 ph = tally.phase;
+        if (ph != uint8(Phase.Committing) && ph != uint8(Phase.Revealing)) revert WrongPhase();
+        if (block.timestamp < uint256(revealStartedAt) + revealTimeout) revert TimeoutNotElapsed();
+
+        tally.phase = uint8(Phase.Aborted);
+
+        emit Aborted(msg.sender);
     }
 
     function memberCount() external view returns (uint256) {

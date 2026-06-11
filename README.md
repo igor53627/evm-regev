@@ -92,6 +92,16 @@ as a failed/abandoned reveal), but cannot forge a *targeted* result; `k`-of-`k`
 has no Byzantine fault tolerance (one absent member stalls finalize, like a
 multisig).
 
+**Optional emergency exit.** Constructor takes `(issuer, members, governance,
+revealTimeout)`. Pass a non-zero `governance` (a multisig / DAO / timelock) to enable
+`emergencyAbort()`: once `revealTimeout` elapses on a stalled opening, governance can move
+the tally to a terminal **Aborted** state — turning a silent permanent stall into an
+explicit, observable dead-end (then redeploy). It can only *kill* a stalled opening, never
+produce a result, so it adds no forgery power; and because members are immutable it is
+abort-and-redeploy, not in-place recovery. Pass `governance = address(0)` to keep the pure
+k-of-k model (stall ⇒ redeploy only). The Open phase is intentionally not abortable — the
+issuer alone decides when to open.
+
 ## Default parameters (TALLY-32)
 
 | Parameter | Value | Note |

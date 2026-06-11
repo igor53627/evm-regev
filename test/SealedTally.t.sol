@@ -17,6 +17,8 @@ contract SealedTallyTest is Test {
 
     address issuer = address(0xBEEF);
     address observer = address(0xDEAD);
+    address governance = address(0x6011); // emergency-exit authority for the governed tests
+    uint64 constant ABORT_TIMEOUT = 7 days;
     address[] members;
 
     SealedTally tally;
@@ -27,7 +29,7 @@ contract SealedTallyTest is Test {
         members.push(address(0xA11));
         members.push(address(0xB22));
         members.push(address(0xC33));
-        tally = new SealedTally(issuer, members);
+        tally = new SealedTally(issuer, members, address(0), 0); // emergency exit off
         s = RegevTestUtils.expandSecret(MASTER, WORDS);
         shares = RegevTestUtils.splitSecretK(s, SHARE_SEED, K);
     }
@@ -290,7 +292,7 @@ contract SealedTallyTest is Test {
         bad[1] = issuer; // issuer also holds a committee share
         bad[2] = members[2];
         vm.expectRevert(bytes("issuer cannot be a member"));
-        new SealedTally(issuer, bad);
+        new SealedTally(issuer, bad, address(0), 0);
     }
 
     /// k == 1 is a single member holding all of s (a single trusted opener that can
@@ -299,14 +301,14 @@ contract SealedTallyTest is Test {
         address[] memory one = new address[](1);
         one[0] = members[0];
         vm.expectRevert(bytes("k out of range"));
-        new SealedTally(issuer, one);
+        new SealedTally(issuer, one, address(0), 0);
     }
 
     /// A zero issuer permanently bricks contribute()/startReveal() (no caller is
     /// address(0)), leaving the instance stuck in Open.
     function test_constructor_rejectsZeroIssuer() public {
         vm.expectRevert(bytes("zero issuer address"));
-        new SealedTally(address(0), members);
+        new SealedTally(address(0), members, address(0), 0);
     }
 
     // ── Gas ───────────────────────────────────────────────────────────────────
@@ -332,5 +334,77 @@ contract SealedTallyTest is Test {
         uint256 g0 = gasleft();
         tally.finalize();
         emit log_named_uint("finalize() warm-exec gas (k=3; excl. 21k base + cold SLOADs)", g0 - gasleft());
+    }
+
+    // ── Emergency exit (opt-in governance + timeout) ────────────────────────────
+
+    /// Deploys a governed tally and drives it into a stalled Committing phase (only k-1
+    /// members commit), returning it ready to be aborted once the timeout elapses.
+    function _stalledGovernedTally() internal returns (SealedTally g) {
+        g = new SealedTally(issuer, members, governance, ABORT_TIMEOUT);
+        bytes32 sd = keccak256("g0");
+        vm.startPrank(issuer);
+        g.contribute(sd, encB(1, sd));
+        g.startReveal();
+        vm.stopPrank();
+        for (uint256 i = 0; i + 1 < K; i++) {
+            vm.prank(members[i]); // one member never commits -> stuck Committing
+            g.commitPartial(keccak256(abi.encode("c", i)));
+        }
+    }
+
+    /// With governance == address(0) the emergency exit is disabled for any caller/phase.
+    function test_emergencyAbort_disabledWhenNoGovernance() public {
+        vm.prank(governance);
+        vm.expectRevert(SealedTally.EmergencyExitDisabled.selector);
+        tally.emergencyAbort(); // setUp tally was deployed with governance off
+    }
+
+    /// Only governance may abort; the issuer/members/outsiders cannot.
+    function test_emergencyAbort_onlyGovernance() public {
+        SealedTally g = _stalledGovernedTally();
+        vm.warp(block.timestamp + ABORT_TIMEOUT);
+        vm.prank(issuer);
+        vm.expectRevert(SealedTally.NotGovernance.selector);
+        g.emergencyAbort();
+    }
+
+    /// Governance cannot abort before the timeout elapses.
+    function test_emergencyAbort_beforeTimeoutReverts() public {
+        SealedTally g = _stalledGovernedTally();
+        vm.prank(governance);
+        vm.expectRevert(SealedTally.TimeoutNotElapsed.selector);
+        g.emergencyAbort();
+    }
+
+    /// The Open phase is not abortable (the issuer alone decides when to open).
+    function test_emergencyAbort_openPhaseNotAbortable() public {
+        SealedTally g = new SealedTally(issuer, members, governance, ABORT_TIMEOUT);
+        vm.warp(block.timestamp + ABORT_TIMEOUT * 10);
+        vm.prank(governance);
+        vm.expectRevert(SealedTally.WrongPhase.selector);
+        g.emergencyAbort();
+    }
+
+    /// Happy path: governance aborts a stalled opening after the timeout; the tally becomes
+    /// terminal Aborted and no further commit/reveal/finalize is possible.
+    function test_emergencyAbort_rescuesStalledOpening() public {
+        SealedTally g = _stalledGovernedTally();
+        vm.warp(block.timestamp + ABORT_TIMEOUT);
+
+        vm.prank(governance);
+        g.emergencyAbort();
+
+        (,, uint8 phase,) = g.tally();
+        assertEq(phase, uint8(4), "phase should be Aborted");
+
+        // Terminal: the missing member committing now, or anyone finalizing, reverts.
+        vm.prank(members[K - 1]);
+        vm.expectRevert(SealedTally.WrongPhase.selector);
+        g.commitPartial(keccak256("late"));
+
+        vm.prank(governance);
+        vm.expectRevert(SealedTally.WrongPhase.selector);
+        g.emergencyAbort(); // cannot abort twice (terminal)
     }
 }
