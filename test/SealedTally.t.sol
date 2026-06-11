@@ -441,4 +441,46 @@ contract SealedTallyTest is Test {
         assertEq(phase, uint8(3), "must be Finalized, not Aborted");
         assertEq(result, 77, "the determined valid result must be recorded, not suppressed");
     }
+
+    /// The other fully-revealed branch: a malicious member reveals a commitment-matching but
+    /// CORRUPTED partial so the aggregate decodes > MAX_RESULT. finalize() reverts
+    /// DecodeOutOfRange (genuinely stuck), and governance can then emergencyAbort() it.
+    function test_emergencyAbort_abortsCorruptedFullyRevealed() public {
+        SealedTally g = new SealedTally(issuer, members, governance, ABORT_TIMEOUT);
+        bytes32[] memory seeds = new bytes32[](1);
+        seeds[0] = keccak256("gc0");
+        vm.startPrank(issuer);
+        g.contribute(seeds[0], encB(77, seeds[0]));
+        g.startReveal();
+        vm.stopPrank();
+
+        uint256[] memory parts = memberPartials(seeds);
+        // Shift member (K-1)'s partial so the aggregate decodes to 65530 > MAX_RESULT (65025):
+        // honest decodes to 77, and p' = p - DELTA*(65530-77) moves the decoded value by that.
+        uint256 Q = 1 << 32;
+        uint256 shift = ((1 << 16) * (65530 - 77)) % Q;
+        parts[K - 1] = (parts[K - 1] + Q - shift) % Q;
+
+        bytes32 iid = g.instanceId();
+        bytes32 snap = g.snapshotDigest();
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            g.commitPartial(keccak256(abi.encode(iid, snap, uint8(i + 1), parts[i], salt(i))));
+        }
+        for (uint256 i = 0; i < K; i++) {
+            vm.prank(members[i]);
+            g.revealPartial(parts[i], salt(i));
+        }
+
+        // Fully revealed but decode is out of range: finalize() reverts (genuinely stuck).
+        vm.expectRevert(SealedTally.DecodeOutOfRange.selector);
+        g.finalize();
+
+        // Governance aborts the corrupted, unfinalizable opening after the timeout.
+        vm.warp(block.timestamp + ABORT_TIMEOUT);
+        vm.prank(governance);
+        g.emergencyAbort();
+        (,, uint8 phase,) = g.tally();
+        assertEq(phase, uint8(4), "corrupted fully-revealed opening should be Aborted");
+    }
 }

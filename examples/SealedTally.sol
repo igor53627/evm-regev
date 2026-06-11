@@ -266,12 +266,14 @@ contract SealedTally {
     ///      silently stuck and indistinguishable from in-progress. This converts that into an
     ///      explicit, observable dead-end so off-chain parties stop waiting and redeploy.
     ///
-    ///      It NEVER produces a result, so it cannot forge or bias a tally -- the only power
-    ///      it grants is to KILL a stalled (Committing/Revealing) opening once revealTimeout
-    ///      has elapsed since startReveal. Because committee membership is immutable, this is
-    ///      an abort (redeploy to retry), not an in-place recovery: a permanently-lost member
-    ///      cannot be replaced here. The Open phase is intentionally NOT abortable -- the
-    ///      issuer alone decides when to open, and a long contribution window is legitimate.
+    ///      It can never fabricate or suppress a result (see the no-suppression note below):
+    ///      it acts only on a stalled (Committing/Revealing) opening once revealTimeout has
+    ///      elapsed since startReveal, either finalizing an already-determined valid result or
+    ///      killing a genuinely stuck one -- so it adds no forgery or bias power. Because
+    ///      committee membership is immutable, killing is an abort (redeploy to retry), not an
+    ///      in-place recovery: a permanently-lost member cannot be replaced here. The Open
+    ///      phase is intentionally NOT abortable -- the issuer alone decides when to open, and
+    ///      a long contribution window is legitimate.
     ///
     ///      No outcome suppression: a FULLY-revealed opening (revealedCount == k) is not
     ///      "stalled" -- its result is already determined. If it decodes in range, this
